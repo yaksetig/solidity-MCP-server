@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+// Note: Using HTTP endpoints instead of SSE for better compatibility
 import {
   CallToolRequestSchema,
   ErrorCode,
@@ -324,28 +324,80 @@ class SolidityMCPServer {
 
     // Enable CORS for Claude
     app.use(cors({
-      origin: ['https://claude.ai', 'https://*.claude.ai'],
+      origin: true,
       credentials: true
     }));
 
-    app.use(express.json());
+    app.use(express.json({ limit: '10mb' }));
 
     // Health check
     app.get('/health', (req, res) => {
-      res.json({ status: 'ok', timestamp: new Date().toISOString() });
+      res.json({ 
+        status: 'ok', 
+        timestamp: new Date().toISOString(),
+        tools: ['compile_solidity', 'security_audit', 'compile_and_audit']
+      });
     });
 
-    // MCP SSE endpoint
-    app.get('/sse', async (req, res) => {
-      const transport = new SSEServerTransport('/sse', res);
-      await this.server.connect(transport);
+    // MCP tools endpoint for Claude
+    app.post('/mcp/tools/list', async (req, res) => {
+      try {
+        const tools = await this.server.request({
+          method: 'tools/list'
+        }, ListToolsRequestSchema);
+        res.json(tools);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    app.post('/mcp/tools/call', async (req, res) => {
+      try {
+        const { name, arguments: args } = req.body;
+        const result = await this.server.request({
+          method: 'tools/call',
+          params: { name, arguments: args }
+        }, CallToolRequestSchema);
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Direct tool endpoints (alternative approach)
+    app.post('/compile', async (req, res) => {
+      try {
+        const result = await this.compileSolidity(req.body);
+        res.json(JSON.parse(result.content[0].text));
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    app.post('/audit', async (req, res) => {
+      try {
+        const result = await this.runSecurityAudit(req.body);
+        res.json(JSON.parse(result.content[0].text));
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    app.post('/compile-and-audit', async (req, res) => {
+      try {
+        const result = await this.compileAndAudit(req.body);
+        res.json(JSON.parse(result.content[0].text));
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
     });
 
     // Start server
     app.listen(port, '0.0.0.0', () => {
       console.log(`🚀 Solidity MCP Server running on port ${port}`);
-      console.log(`📡 SSE endpoint: http://localhost:${port}/sse`);
+      console.log(`📡 MCP endpoint: http://localhost:${port}/mcp`);
       console.log(`🏥 Health check: http://localhost:${port}/health`);
+      console.log(`🔧 Direct endpoints: /compile, /audit, /compile-and-audit`);
     });
   }
 }
