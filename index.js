@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import {
   CallToolRequestSchema,
   ErrorCode,
@@ -12,6 +12,8 @@ import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
+import express from 'express';
+import cors from 'cors';
 
 class SolidityMCPServer {
   constructor() {
@@ -316,12 +318,37 @@ class SolidityMCPServer {
     };
   }
 
-  async run() {
-    const transport = new StdioServerTransport();
-    await this.server.connect(transport);
-    console.error('Solidity MCP server running on stdio');
+  async startHttpServer() {
+    const app = express();
+    const port = process.env.PORT || 3000;
+
+    // Enable CORS for Claude
+    app.use(cors({
+      origin: ['https://claude.ai', 'https://*.claude.ai'],
+      credentials: true
+    }));
+
+    app.use(express.json());
+
+    // Health check
+    app.get('/health', (req, res) => {
+      res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    });
+
+    // MCP SSE endpoint
+    app.get('/sse', async (req, res) => {
+      const transport = new SSEServerTransport('/sse', res);
+      await this.server.connect(transport);
+    });
+
+    // Start server
+    app.listen(port, '0.0.0.0', () => {
+      console.log(`🚀 Solidity MCP Server running on port ${port}`);
+      console.log(`📡 SSE endpoint: http://localhost:${port}/sse`);
+      console.log(`🏥 Health check: http://localhost:${port}/health`);
+    });
   }
 }
 
 const server = new SolidityMCPServer();
-server.run().catch(console.error);
+server.startHttpServer().catch(console.error);
