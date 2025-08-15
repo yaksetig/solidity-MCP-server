@@ -1,173 +1,79 @@
-#!/usr/bin/env node
-
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-// Note: Using HTTP endpoints instead of SSE for better compatibility
-import {
-  CallToolRequestSchema,
-  ErrorCode,
-  ListToolsRequestSchema,
-  McpError,
-} from '@modelcontextprotocol/sdk/types.js';
+import express from 'express';
+import cors from 'cors';
 import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
-import express from 'express';
-import cors from 'cors';
 
-class SolidityMCPServer {
-  constructor() {
-    this.server = new Server(
-      {
-        name: 'solidity-compiler-auditor',
-        version: '1.0.0',
-      },
-      {
-        capabilities: {
-          tools: {},
-        },
-      }
-    );
+const app = express();
+const port = process.env.PORT || 3000;
 
-    this.setupToolHandlers();
+// Middleware
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+
+// Helper functions
+async function createTempFile(filename, code) {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'solidity-'));
+  const filePath = path.join(tempDir, filename);
+  await fs.writeFile(filePath, code, 'utf8');
+  return { tempDir, filePath };
+}
+
+async function cleanupTempDir(tempDir) {
+  try {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  } catch (error) {
+    // Ignore cleanup errors
   }
+}
 
-  setupToolHandlers() {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      return {
-        tools: [
-          {
-            name: 'compile_solidity',
-            description: 'Compile Solidity code from text input',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                code: {
-                  type: 'string',
-                  description: 'The Solidity source code as text',
-                },
-                filename: {
-                  type: 'string',
-                  description: 'Contract filename (default: Contract.sol)',
-                  default: 'Contract.sol',
-                },
-              },
-              required: ['code'],
-            },
-          },
-          {
-            name: 'security_audit',
-            description: 'Run Slither security analysis on Solidity code from text input',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                code: {
-                  type: 'string',
-                  description: 'The Solidity source code as text',
-                },
-                filename: {
-                  type: 'string',
-                  description: 'Contract filename (default: Contract.sol)',
-                  default: 'Contract.sol',
-                },
-              },
-              required: ['code'],
-            },
-          },
-          {
-            name: 'compile_and_audit',
-            description: 'Complete workflow: compile then audit Solidity code',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                code: {
-                  type: 'string',
-                  description: 'The Solidity source code as text',
-                },
-                filename: {
-                  type: 'string',
-                  description: 'Contract filename (default: Contract.sol)',
-                  default: 'Contract.sol',
-                },
-              },
-              required: ['code'],
-            },
-          },
-        ],
-      };
+function runCommand(command, args, options = {}) {
+  return new Promise((resolve) => {
+    const process = spawn(command, args, options);
+    
+    let stdout = '';
+    let stderr = '';
+    
+    process.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+    
+    process.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+    
+    process.on('close', (code) => {
+      resolve({ stdout, stderr, exitCode: code });
     });
 
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const { name, arguments: args } = request.params;
-
-      try {
-        if (name === 'compile_solidity') {
-          return await this.compileSolidity(args);
-        } else if (name === 'security_audit') {
-          return await this.runSecurityAudit(args);
-        } else if (name === 'compile_and_audit') {
-          return await this.compileAndAudit(args);
-        } else {
-          throw new McpError(
-            ErrorCode.MethodNotFound,
-            `Unknown tool: ${name}`
-          );
-        }
-      } catch (error) {
-        throw new McpError(
-          ErrorCode.InternalError,
-          `Error executing ${name}: ${error.message}`
-        );
-      }
+    process.on('error', (error) => {
+      resolve({ stdout: '', stderr: error.message, exitCode: 1 });
     });
-  }
+  });
+}
 
-  async createTempFile(filename, code) {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'solidity-mcp-'));
-    const filePath = path.join(tempDir, filename);
-    await fs.writeFile(filePath, code, 'utf8');
-    return { tempDir, filePath };
-  }
+// Routes
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    endpoints: ['/compile', '/audit', '/compile-and-audit']
+  });
+});
 
-  async cleanupTempDir(tempDir) {
-    try {
-      await fs.rm(tempDir, { recursive: true, force: true });
-    } catch (error) {
-      // Ignore cleanup errors
+app.post('/compile', async (req, res) => {
+  try {
+    const { code, filename = 'Contract.sol' } = req.body;
+    
+    if (!code) {
+      return res.status(400).json({ error: 'Code is required' });
     }
-  }
 
-  async runCommand(command, args, options = {}) {
-    return new Promise((resolve) => {
-      const process = spawn(command, args, options);
-      
-      let stdout = '';
-      let stderr = '';
-      
-      process.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-      
-      process.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-      
-      process.on('close', (code) => {
-        resolve({ stdout, stderr, exitCode: code });
-      });
-
-      process.on('error', (error) => {
-        resolve({ stdout: '', stderr: error.message, exitCode: 1 });
-      });
-    });
-  }
-
-  async compileSolidity(args) {
-    const { code, filename = 'Contract.sol' } = args;
-    const { tempDir, filePath } = await this.createTempFile(filename, code);
+    const { tempDir, filePath } = await createTempFile(filename, code);
     
     try {
-      const { stdout, stderr, exitCode } = await this.runCommand('solc', [
+      const { stdout, stderr, exitCode } = await runCommand('solc', [
         '--combined-json', 'abi,bin,metadata',
         filePath
       ], { cwd: tempDir });
@@ -197,31 +103,33 @@ class SolidityMCPServer {
         });
       }
       
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              success,
-              errors,
-              warnings,
-              contracts,
-              raw_output: stdout
-            }, null, 2),
-          },
-        ],
-      };
+      res.json({
+        success,
+        errors,
+        warnings,
+        contracts,
+        filename
+      });
     } finally {
-      await this.cleanupTempDir(tempDir);
+      await cleanupTempDir(tempDir);
     }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
+});
 
-  async runSecurityAudit(args) {
-    const { code, filename = 'Contract.sol' } = args;
-    const { tempDir, filePath } = await this.createTempFile(filename, code);
+app.post('/audit', async (req, res) => {
+  try {
+    const { code, filename = 'Contract.sol' } = req.body;
+    
+    if (!code) {
+      return res.status(400).json({ error: 'Code is required' });
+    }
+
+    const { tempDir, filePath } = await createTempFile(filename, code);
     
     try {
-      const { stdout, stderr, exitCode } = await this.runCommand('slither', [
+      const { stdout, stderr, exitCode } = await runCommand('slither', [
         '--json', '-',
         filePath
       ], { cwd: tempDir });
@@ -257,150 +165,81 @@ class SolidityMCPServer {
         errors.push(stderr.trim());
       }
       
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              success: success || exitCode === 0,
-              findings,
-              summary,
-              errors,
-              raw_output: stdout
-            }, null, 2),
-          },
-        ],
-      };
+      res.json({
+        success: success || exitCode === 0,
+        findings,
+        summary,
+        errors,
+        filename
+      });
     } finally {
-      await this.cleanupTempDir(tempDir);
+      await cleanupTempDir(tempDir);
     }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
+});
 
-  async compileAndAudit(args) {
-    const { code, filename = 'Contract.sol' } = args;
+app.post('/compile-and-audit', async (req, res) => {
+  try {
+    const { code, filename = 'Contract.sol' } = req.body;
     
+    if (!code) {
+      return res.status(400).json({ error: 'Code is required' });
+    }
+
     // Step 1: Compile
-    const compileResult = await this.compileSolidity({ code, filename });
-    const compileData = JSON.parse(compileResult.content[0].text);
+    const compileResponse = await fetch(`http://localhost:${port}/compile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, filename })
+    });
+    const compileData = await compileResponse.json();
     
     if (!compileData.success) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              workflow: 'compile_and_audit',
-              compile_step: compileData,
-              audit_step: { skipped: 'Compilation failed' },
-              overall_success: false
-            }, null, 2),
-          },
-        ],
-      };
+      return res.json({
+        workflow: 'compile_and_audit',
+        compile_step: compileData,
+        audit_step: { skipped: 'Compilation failed' },
+        overall_success: false
+      });
     }
     
     // Step 2: Audit
-    const auditResult = await this.runSecurityAudit({ code, filename });
-    const auditData = JSON.parse(auditResult.content[0].text);
+    const auditResponse = await fetch(`http://localhost:${port}/audit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, filename })
+    });
+    const auditData = await auditResponse.json();
     
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            workflow: 'compile_and_audit',
-            compile_step: compileData,
-            audit_step: auditData,
-            overall_success: compileData.success && auditData.success
-          }, null, 2),
-        },
-      ],
-    };
+    res.json({
+      workflow: 'compile_and_audit',
+      compile_step: compileData,
+      audit_step: auditData,
+      overall_success: compileData.success && auditData.success
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
+});
 
-  async startHttpServer() {
-    const app = express();
-    const port = process.env.PORT || 3000;
+// Start server
+app.listen(port, '0.0.0.0', () => {
+  console.log(`🚀 Simple Solidity Server running on port ${port}`);
+  console.log(`🏥 Health: http://localhost:${port}/health`);
+  console.log(`🔧 Compile: POST http://localhost:${port}/compile`);
+  console.log(`🔍 Audit: POST http://localhost:${port}/audit`);
+  console.log(`⚡ Both: POST http://localhost:${port}/compile-and-audit`);
+});
 
-    // Enable CORS for Claude
-    app.use(cors({
-      origin: true,
-      credentials: true
-    }));
+// Handle graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('Received SIGTERM, shutting down gracefully');
+  process.exit(0);
+});
 
-    app.use(express.json({ limit: '10mb' }));
-
-    // Health check
-    app.get('/health', (req, res) => {
-      res.json({ 
-        status: 'ok', 
-        timestamp: new Date().toISOString(),
-        tools: ['compile_solidity', 'security_audit', 'compile_and_audit']
-      });
-    });
-
-    // MCP tools endpoint for Claude
-    app.post('/mcp/tools/list', async (req, res) => {
-      try {
-        const tools = await this.server.request({
-          method: 'tools/list'
-        }, ListToolsRequestSchema);
-        res.json(tools);
-      } catch (error) {
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    app.post('/mcp/tools/call', async (req, res) => {
-      try {
-        const { name, arguments: args } = req.body;
-        const result = await this.server.request({
-          method: 'tools/call',
-          params: { name, arguments: args }
-        }, CallToolRequestSchema);
-        res.json(result);
-      } catch (error) {
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // Direct tool endpoints (alternative approach)
-    app.post('/compile', async (req, res) => {
-      try {
-        const result = await this.compileSolidity(req.body);
-        res.json(JSON.parse(result.content[0].text));
-      } catch (error) {
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    app.post('/audit', async (req, res) => {
-      try {
-        const result = await this.runSecurityAudit(req.body);
-        res.json(JSON.parse(result.content[0].text));
-      } catch (error) {
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    app.post('/compile-and-audit', async (req, res) => {
-      try {
-        const result = await this.compileAndAudit(req.body);
-        res.json(JSON.parse(result.content[0].text));
-      } catch (error) {
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // Start server
-    app.listen(port, '0.0.0.0', () => {
-      console.log(`🚀 Solidity MCP Server running on port ${port}`);
-      console.log(`📡 MCP endpoint: http://localhost:${port}/mcp`);
-      console.log(`🏥 Health check: http://localhost:${port}/health`);
-      console.log(`🔧 Direct endpoints: /compile, /audit, /compile-and-audit`);
-    });
-  }
-}
-
-const server = new SolidityMCPServer();
-server.startHttpServer().catch(console.error);
+process.on('SIGINT', () => {
+  console.log('Received SIGINT, shutting down gracefully');
+  process.exit(0);
+});
