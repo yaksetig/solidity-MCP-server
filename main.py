@@ -9,6 +9,9 @@ from mcp.server.fastmcp import FastMCP
 port = int(os.environ.get("PORT", 8080))
 
 # Initialize Solidity MCP server with SSE transport
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+NODE_MODULES_PATH = os.path.join(APP_DIR, "node_modules")
+
 mcp = FastMCP("solidity-mcp", host="0.0.0.0", port=port)
 
 @mcp.tool(
@@ -27,9 +30,15 @@ async def compile_solidity(code: str, filename: str = "Contract.sol") -> dict[st
             f.write(code)
             temp_file = f.name
         
-        # Run solc compilation
+        # Run solc compilation with Node modules path for imports
+        temp_dir = os.path.dirname(temp_file)
         result = subprocess.run([
-            'solc', '--combined-json', 'abi,bin,metadata', temp_file
+            'solc',
+            '--allow-paths', f"{temp_dir},{NODE_MODULES_PATH}",
+            '--base-path', temp_dir,
+            '--include-path', NODE_MODULES_PATH,
+            '--combined-json', 'abi,bin,metadata',
+            temp_file
         ], capture_output=True, text=True, timeout=30)
         
         # Clean up temp file
@@ -85,9 +94,15 @@ async def security_audit(code: str, filename: str = "Contract.sol") -> dict[str,
             f.write(code)
             temp_file = f.name
         
-        # Run Slither analysis
+        # Run Slither analysis with solc import paths
+        temp_dir = os.path.dirname(temp_file)
+        solc_args = (
+            f"--allow-paths {temp_dir},{NODE_MODULES_PATH} "
+            f"--base-path {temp_dir} "
+            f"--include-path {NODE_MODULES_PATH}"
+        )
         result = subprocess.run([
-            'slither', '--json', '-', temp_file
+            'slither', '--json', '-', '--solc-args', solc_args, temp_file
         ], capture_output=True, text=True, timeout=60)
         
         # Clean up temp file
