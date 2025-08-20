@@ -5,6 +5,9 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     software-properties-common \
+    nodejs \
+    npm \
+    cargo \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Solidity compiler
@@ -12,6 +15,9 @@ RUN add-apt-repository ppa:ethereum/ethereum \
     && apt-get update \
     && apt-get install -y solc \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Circom compiler and circomspect analyzer
+RUN npm install -g circom && cargo install circomspect
 
 WORKDIR /app
 
