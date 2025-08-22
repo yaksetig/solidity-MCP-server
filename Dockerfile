@@ -16,7 +16,10 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Tamarin dependencies
-RUN apt-get update && apt-get install -y graphviz maude haskell-stack && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    graphviz maude haskell-stack \
+    libgmp-dev libffi-dev zlib1g-dev libtinfo-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install Solidity compiler
 RUN add-apt-repository ppa:ethereum/ethereum \
