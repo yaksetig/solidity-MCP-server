@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     file \
     git \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Solidity compiler
