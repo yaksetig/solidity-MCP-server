@@ -22,9 +22,16 @@ RUN add-apt-repository ppa:ethereum/ethereum \
     && apt-get install -y solc \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Homebrew and Tamarin prover
-RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
-    && echo 'eval $(/home/linuxbrew/.linuxbrew/bin/brew shellenv)' >> /root/.profile \
+# Create linuxbrew user for Homebrew
+RUN useradd -m -s /bin/bash linuxbrew
+
+# Install Homebrew as linuxbrew user
+USER linuxbrew
+RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Install Tamarin prover as root
+USER root
+RUN echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /root/.profile \
     && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" \
     && brew install tamarin-prover/tap/tamarin-prover
 
