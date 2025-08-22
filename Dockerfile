@@ -7,8 +7,6 @@ RUN apt-get update && apt-get install -y \
     nodejs \
     npm \
     software-properties-common \
-    nodejs \
-    npm \
     cargo \
     build-essential \
     curl \
