@@ -15,31 +15,26 @@ RUN apt-get update && apt-get install -y \
     procps \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Tamarin dependencies
+RUN apt-get update && apt-get install -y graphviz maude haskell-stack && rm -rf /var/lib/apt/lists/*
+
 # Install Solidity compiler
 RUN add-apt-repository ppa:ethereum/ethereum \
     && apt-get update \
     && apt-get install -y solc \
     && rm -rf /var/lib/apt/lists/*
 
-# Create linuxbrew user for Homebrew
-RUN useradd -m -s /bin/bash linuxbrew
+# Clone and build Tamarin prover
+RUN git clone https://github.com/tamarin-prover/tamarin-prover.git /opt/tamarin
 
-# Install Homebrew as linuxbrew user
-USER linuxbrew
-RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# Install Tamarin prover as root
-USER root
-RUN echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /root/.profile \
-    && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" \
-    && brew install tamarin-prover/tap/tamarin-prover
-
-ENV PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
+WORKDIR /opt/tamarin
+RUN stack setup && stack build && stack install
+ENV PATH="/root/.local/bin:$PATH"
+RUN stack clean --full && rm -rf /root/.stack /opt/tamarin
+WORKDIR /app
 
 # Install Circom compiler and circomspect analyzer
 RUN npm install -g circom && cargo install circomspect
-
-WORKDIR /app
 
 # Install OpenZeppelin contracts
 RUN npm init -y && npm install @openzeppelin/contracts
