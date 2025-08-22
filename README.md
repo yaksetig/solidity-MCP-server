@@ -38,3 +38,13 @@ Run a security analysis by pointing Circomspect at a circuit:
 circomspect path/to/circuit
 ```
 
+## Tamarin Prover
+
+The Docker image installs the [Tamarin prover](https://tamarin-prover.github.io/) using Homebrew:
+
+```bash
+brew install tamarin-prover/tap/tamarin-prover
+```
+
+After installation, the `tamarin-prover` command is available inside the container for protocol verification tasks.
+

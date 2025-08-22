@@ -10,6 +10,10 @@ RUN apt-get update && apt-get install -y \
     nodejs \
     npm \
     cargo \
+    build-essential \
+    curl \
+    file \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Solidity compiler
@@ -17,6 +21,14 @@ RUN add-apt-repository ppa:ethereum/ethereum \
     && apt-get update \
     && apt-get install -y solc \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Homebrew and Tamarin prover
+RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+    && echo 'eval $(/home/linuxbrew/.linuxbrew/bin/brew shellenv)' >> /root/.profile \
+    && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" \
+    && brew install tamarin-prover/tap/tamarin-prover
+
+ENV PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
 
 # Install Circom compiler and circomspect analyzer
 RUN npm install -g circom && cargo install circomspect
