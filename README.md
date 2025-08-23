@@ -48,3 +48,8 @@ brew install tamarin-prover/tap/tamarin-prover
 
 After installation, the `tamarin-prover` command is available inside the container for protocol verification tasks.
 
+When building the prover from source using `stack`, make sure the system has the
+`xz-utils` package installed. Stack downloads GHC archives compressed with XZ
+and will fail with a missing `configure` script if the archive cannot be
+extracted.
+
