@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y \
     file \
     git \
     procps \
+    xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Tamarin dependencies
