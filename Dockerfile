@@ -37,6 +37,7 @@ RUN stack update && \
     stack --resolver lts-22.0 setup && \
     stack --resolver lts-22.0 build && \
     stack --resolver lts-22.0 install
+
 ENV PATH="/root/.local/bin:$PATH"
 RUN stack clean --full && rm -rf /root/.stack /opt/tamarin
 WORKDIR /app
