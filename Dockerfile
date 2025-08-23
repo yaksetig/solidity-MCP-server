@@ -32,6 +32,7 @@ RUN add-apt-repository ppa:ethereum/ethereum \
 RUN git clone https://github.com/tamarin-prover/tamarin-prover.git /opt/tamarin
 
 WORKDIR /opt/tamarin
+
 # Install a released GHC via ghcup and build Tamarin with the system GHC
 RUN curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | \
         BOOTSTRAP_HASKELL_NONINTERACTIVE=1 BOOTSTRAP_HASKELL_YES=1 BOOTSTRAP_HASKELL_MINIMAL=1 sh && \
