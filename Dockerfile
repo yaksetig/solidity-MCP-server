@@ -32,7 +32,11 @@ RUN add-apt-repository ppa:ethereum/ethereum \
 RUN git clone https://github.com/tamarin-prover/tamarin-prover.git /opt/tamarin
 
 WORKDIR /opt/tamarin
-RUN stack setup && stack build && stack install
+# Use a released GHC snapshot to avoid missing configure script errors
+RUN stack update && \
+    stack setup --resolver lts-22.0 && \
+    stack build --resolver lts-22.0 && \
+    stack install --resolver lts-22.0
 ENV PATH="/root/.local/bin:$PATH"
 RUN stack clean --full && rm -rf /root/.stack /opt/tamarin
 WORKDIR /app
