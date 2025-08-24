@@ -4,20 +4,248 @@ import tempfile
 import json
 from typing import Any
 import base64
-from mcp.server.fastmcp import FastMCP
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 
 # Get port from Railway's environment variable
 port = int(os.environ.get("PORT", 8080))
 
-# Initialize Solidity MCP server with SSE transport
+app = FastAPI()
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Constants
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 NODE_MODULES_PATH = os.path.join(APP_DIR, "node_modules")
 
-mcp = FastMCP("solidity-mcp", host="0.0.0.0", port=port)
+# MCP Protocol endpoints
+@app.get("/")
+async def root():
+    return {
+        "jsonrpc": "2.0",
+        "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {
+                "tools": {}
+            },
+            "serverInfo": {
+                "name": "solidity-mcp",
+                "version": "1.0.0"
+            }
+        }
+    }
 
-@mcp.tool(
-    description="Compile Solidity code and return compilation results"
-)
+@app.post("/")
+async def handle_mcp_request(request: Request):
+    """Handle MCP JSON-RPC requests"""
+    try:
+        body = await request.json()
+        method = body.get("method")
+        params = body.get("params", {})
+        request_id = body.get("id")
+
+        if method == "initialize":
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {
+                        "tools": {}
+                    },
+                    "serverInfo": {
+                        "name": "solidity-mcp",
+                        "version": "1.0.0"
+                    }
+                }
+            }
+        
+        elif method == "tools/list":
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "tools": [
+                        {
+                            "name": "compile_solidity",
+                            "description": "Compile Solidity code and return compilation results",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "code": {
+                                        "type": "string",
+                                        "description": "The Solidity source code as text"
+                                    },
+                                    "filename": {
+                                        "type": "string",
+                                        "description": "Optional filename for the contract (default: Contract.sol)",
+                                        "default": "Contract.sol"
+                                    }
+                                },
+                                "required": ["code"]
+                            }
+                        },
+                        {
+                            "name": "security_audit",
+                            "description": "Run Slither security analysis on Solidity code",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "code": {
+                                        "type": "string",
+                                        "description": "The Solidity source code as text"
+                                    },
+                                    "filename": {
+                                        "type": "string",
+                                        "description": "Optional filename for the contract (default: Contract.sol)",
+                                        "default": "Contract.sol"
+                                    }
+                                },
+                                "required": ["code"]
+                            }
+                        },
+                        {
+                            "name": "compile_circom",
+                            "description": "Compile Circom code and return generated artifacts",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "code": {
+                                        "type": "string",
+                                        "description": "The Circom source code as text"
+                                    },
+                                    "filename": {
+                                        "type": "string",
+                                        "description": "Optional filename for the circuit (default: circuit.circom)",
+                                        "default": "circuit.circom"
+                                    }
+                                },
+                                "required": ["code"]
+                            }
+                        },
+                        {
+                            "name": "audit_circom",
+                            "description": "Run circomspect security analysis on Circom code",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "code": {
+                                        "type": "string",
+                                        "description": "The Circom source code as text"
+                                    },
+                                    "filename": {
+                                        "type": "string",
+                                        "description": "Optional filename for the circuit (default: circuit.circom)",
+                                        "default": "circuit.circom"
+                                    }
+                                },
+                                "required": ["code"]
+                            }
+                        },
+                        {
+                            "name": "compile_and_audit",
+                            "description": "Complete workflow: compile Solidity code then run security audit",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "code": {
+                                        "type": "string",
+                                        "description": "The Solidity source code as text"
+                                    },
+                                    "filename": {
+                                        "type": "string",
+                                        "description": "Optional filename for the contract (default: Contract.sol)",
+                                        "default": "Contract.sol"
+                                    }
+                                },
+                                "required": ["code"]
+                            }
+                        }
+                    ]
+                }
+            }
+        
+        elif method == "tools/call":
+            tool_name = params.get("name")
+            arguments = params.get("arguments", {})
+            
+            if tool_name == "compile_solidity":
+                result = await compile_solidity(
+                    arguments.get("code"), 
+                    arguments.get("filename", "Contract.sol")
+                )
+            elif tool_name == "security_audit":
+                result = await security_audit(
+                    arguments.get("code"),
+                    arguments.get("filename", "Contract.sol")
+                )
+            elif tool_name == "compile_circom":
+                result = await compile_circom(
+                    arguments.get("code"),
+                    arguments.get("filename", "circuit.circom")
+                )
+            elif tool_name == "audit_circom":
+                result = await audit_circom(
+                    arguments.get("code"),
+                    arguments.get("filename", "circuit.circom")
+                )
+            elif tool_name == "compile_and_audit":
+                result = await compile_and_audit(
+                    arguments.get("code"),
+                    arguments.get("filename", "Contract.sol")
+                )
+            else:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {
+                        "code": -32601,
+                        "message": f"Method not found: {tool_name}"
+                    }
+                }
+            
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(result, indent=2)
+                        }
+                    ]
+                }
+            }
+        
+        else:
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {
+                    "code": -32601,
+                    "message": f"Method not found: {method}"
+                }
+            }
+    
+    except Exception as e:
+        return {
+            "jsonrpc": "2.0",
+            "id": body.get("id") if 'body' in locals() else None,
+            "error": {
+                "code": -32603,
+                "message": f"Internal error: {str(e)}"
+            }
+        }
+
+# Tool implementations
 async def compile_solidity(code: str, filename: str = "Contract.sol") -> dict[str, Any]:
     """Compile Solidity source code.
     
@@ -79,9 +307,6 @@ async def compile_solidity(code: str, filename: str = "Contract.sol") -> dict[st
     except Exception as e:
         return {"success": False, "errors": [str(e)], "warnings": [], "contracts": None}
 
-@mcp.tool(
-    description="Run Slither security analysis on Solidity code"
-)
 async def security_audit(code: str, filename: str = "Contract.sol") -> dict[str, Any]:
     """Run Slither security analysis on Solidity code.
     
@@ -149,10 +374,6 @@ async def security_audit(code: str, filename: str = "Contract.sol") -> dict[str,
     except Exception as e:
         return {"success": False, "findings": [], "summary": {}, "errors": [str(e)]}
 
-
-@mcp.tool(
-    description="Compile Circom code and return generated artifacts"
-)
 async def compile_circom(code: str, filename: str = "circuit.circom") -> dict[str, Any]:
     """Compile Circom source code using the circom compiler.
 
@@ -226,10 +447,6 @@ async def compile_circom(code: str, filename: str = "circuit.circom") -> dict[st
             "stdout": "",
         }
 
-
-@mcp.tool(
-    description="Run circomspect security analysis on Circom code"
-)
 async def audit_circom(code: str, filename: str = "circuit.circom") -> dict[str, Any]:
     """Run circomspect security analysis on Circom code.
 
@@ -298,9 +515,6 @@ async def audit_circom(code: str, filename: str = "circuit.circom") -> dict[str,
             "errors": [str(e)],
         }
 
-@mcp.tool(
-    description="Complete workflow: compile Solidity code then run security audit"
-)
 async def compile_and_audit(code: str, filename: str = "Contract.sol") -> dict[str, Any]:
     """Compile Solidity code and then run security audit.
     
@@ -330,4 +544,5 @@ async def compile_and_audit(code: str, filename: str = "Contract.sol") -> dict[s
     }
 
 if __name__ == "__main__":
-    mcp.run(transport='sse')
+    print(f"Starting Solidity MCP server on port {port}")
+    uvicorn.run(app, host="0.0.0.0", port=port)
