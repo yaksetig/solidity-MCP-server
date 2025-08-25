@@ -51,9 +51,11 @@ async def handle_mcp_request(request: Request):
         method = body.get("method")
         params = body.get("params", {})
         request_id = body.get("id")
+        
+        print(f"Received MCP request: {method} with ID: {request_id}")
 
         if method == "initialize":
-            return {
+            response = {
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "result": {
@@ -67,9 +69,11 @@ async def handle_mcp_request(request: Request):
                     }
                 }
             }
+            print(f"Sending initialize response: {response}")
+            return response
         
         elif method == "tools/list":
-            return {
+            response = {
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "result": {
@@ -86,7 +90,7 @@ async def handle_mcp_request(request: Request):
                                     },
                                     "filename": {
                                         "type": "string",
-                                        "description": "Optional filename for the contract (default: Contract.sol)",
+                                        "description": "Optional filename for the contract",
                                         "default": "Contract.sol"
                                     }
                                 },
@@ -105,46 +109,8 @@ async def handle_mcp_request(request: Request):
                                     },
                                     "filename": {
                                         "type": "string",
-                                        "description": "Optional filename for the contract (default: Contract.sol)",
+                                        "description": "Optional filename for the contract",
                                         "default": "Contract.sol"
-                                    }
-                                },
-                                "required": ["code"]
-                            }
-                        },
-                        {
-                            "name": "compile_circom",
-                            "description": "Compile Circom code and return generated artifacts",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "code": {
-                                        "type": "string",
-                                        "description": "The Circom source code as text"
-                                    },
-                                    "filename": {
-                                        "type": "string",
-                                        "description": "Optional filename for the circuit (default: circuit.circom)",
-                                        "default": "circuit.circom"
-                                    }
-                                },
-                                "required": ["code"]
-                            }
-                        },
-                        {
-                            "name": "audit_circom",
-                            "description": "Run circomspect security analysis on Circom code",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "code": {
-                                        "type": "string",
-                                        "description": "The Circom source code as text"
-                                    },
-                                    "filename": {
-                                        "type": "string",
-                                        "description": "Optional filename for the circuit (default: circuit.circom)",
-                                        "default": "circuit.circom"
                                     }
                                 },
                                 "required": ["code"]
@@ -162,7 +128,7 @@ async def handle_mcp_request(request: Request):
                                     },
                                     "filename": {
                                         "type": "string",
-                                        "description": "Optional filename for the contract (default: Contract.sol)",
+                                        "description": "Optional filename for the contract",
                                         "default": "Contract.sol"
                                     }
                                 },
@@ -172,6 +138,8 @@ async def handle_mcp_request(request: Request):
                     ]
                 }
             }
+            print(f"Sending tools/list response with {len(response['result']['tools'])} tools")
+            return response
         
         elif method == "tools/call":
             tool_name = params.get("name")
