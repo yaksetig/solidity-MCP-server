@@ -26,6 +26,67 @@ app.add_middleware(
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 NODE_MODULES_PATH = os.path.join(APP_DIR, "node_modules")
 
+# Define tools schema
+TOOLS_SCHEMA = [
+    {
+        "name": "compile_solidity",
+        "description": "Compile Solidity code and return compilation results",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "The Solidity source code as text"
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Optional filename for the contract",
+                    "default": "Contract.sol"
+                }
+            },
+            "required": ["code"]
+        }
+    },
+    {
+        "name": "security_audit",
+        "description": "Run Slither security analysis on Solidity code",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "The Solidity source code as text"
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Optional filename for the contract",
+                    "default": "Contract.sol"
+                }
+            },
+            "required": ["code"]
+        }
+    },
+    {
+        "name": "compile_and_audit",
+        "description": "Complete workflow: compile Solidity code then run security audit",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "The Solidity source code as text"
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Optional filename for the contract",
+                    "default": "Contract.sol"
+                }
+            },
+            "required": ["code"]
+        }
+    }
+]
+
 # MCP Protocol endpoints
 @app.get("/")
 async def root():
@@ -34,12 +95,15 @@ async def root():
         "result": {
             "protocolVersion": "2024-11-05",
             "capabilities": {
-                "tools": {}
+                "tools": {
+                    "listChanged": True
+                }
             },
             "serverInfo": {
                 "name": "solidity-mcp",
                 "version": "1.0.0"
-            }
+            },
+            "tools": TOOLS_SCHEMA
         }
     }
 
@@ -63,15 +127,18 @@ async def handle_mcp_request(request: Request):
                     "capabilities": {
                         "tools": {
                             "listChanged": True
-                        }
+                        },
+                        "resources": {},
+                        "prompts": {}
                     },
                     "serverInfo": {
                         "name": "solidity-mcp",
                         "version": "1.0.0"
-                    }
+                    },
+                    "tools": TOOLS_SCHEMA
                 }
             }
-            print(f"Sending initialize response: {response}")
+            print(f"Sending initialize response with {len(TOOLS_SCHEMA)} tools")
             return response
         
         elif method == "tools/list":
@@ -79,68 +146,10 @@ async def handle_mcp_request(request: Request):
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "result": {
-                    "tools": [
-                        {
-                            "name": "compile_solidity",
-                            "description": "Compile Solidity code and return compilation results",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "code": {
-                                        "type": "string",
-                                        "description": "The Solidity source code as text"
-                                    },
-                                    "filename": {
-                                        "type": "string",
-                                        "description": "Optional filename for the contract",
-                                        "default": "Contract.sol"
-                                    }
-                                },
-                                "required": ["code"]
-                            }
-                        },
-                        {
-                            "name": "security_audit",
-                            "description": "Run Slither security analysis on Solidity code",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "code": {
-                                        "type": "string",
-                                        "description": "The Solidity source code as text"
-                                    },
-                                    "filename": {
-                                        "type": "string",
-                                        "description": "Optional filename for the contract",
-                                        "default": "Contract.sol"
-                                    }
-                                },
-                                "required": ["code"]
-                            }
-                        },
-                        {
-                            "name": "compile_and_audit",
-                            "description": "Complete workflow: compile Solidity code then run security audit",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "code": {
-                                        "type": "string",
-                                        "description": "The Solidity source code as text"
-                                    },
-                                    "filename": {
-                                        "type": "string",
-                                        "description": "Optional filename for the contract",
-                                        "default": "Contract.sol"
-                                    }
-                                },
-                                "required": ["code"]
-                            }
-                        }
-                    ]
+                    "tools": TOOLS_SCHEMA
                 }
             }
-            print(f"Sending tools/list response with {len(response['result']['tools'])} tools")
+            print(f"Sending tools/list response with {len(TOOLS_SCHEMA)} tools")
             return response
         
         elif method == "notifications/initialized":
@@ -152,6 +161,8 @@ async def handle_mcp_request(request: Request):
             tool_name = params.get("name")
             arguments = params.get("arguments", {})
             
+            print(f"Tool call: {tool_name} with args: {arguments}")
+            
             if tool_name == "compile_solidity":
                 result = await compile_solidity(
                     arguments.get("code"), 
@@ -161,16 +172,6 @@ async def handle_mcp_request(request: Request):
                 result = await security_audit(
                     arguments.get("code"),
                     arguments.get("filename", "Contract.sol")
-                )
-            elif tool_name == "compile_circom":
-                result = await compile_circom(
-                    arguments.get("code"),
-                    arguments.get("filename", "circuit.circom")
-                )
-            elif tool_name == "audit_circom":
-                result = await audit_circom(
-                    arguments.get("code"),
-                    arguments.get("filename", "circuit.circom")
                 )
             elif tool_name == "compile_and_audit":
                 result = await compile_and_audit(
@@ -201,6 +202,7 @@ async def handle_mcp_request(request: Request):
             }
         
         else:
+            print(f"Unknown MCP method: {method} with params: {params}")
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
@@ -211,6 +213,7 @@ async def handle_mcp_request(request: Request):
             }
     
     except Exception as e:
+        print(f"Error handling request: {str(e)}")
         return {
             "jsonrpc": "2.0",
             "id": body.get("id") if 'body' in locals() else None,
@@ -222,12 +225,7 @@ async def handle_mcp_request(request: Request):
 
 # Tool implementations
 async def compile_solidity(code: str, filename: str = "Contract.sol") -> dict[str, Any]:
-    """Compile Solidity source code.
-    
-    Args:
-        code: The Solidity source code as text
-        filename: Optional filename for the contract (default: Contract.sol)
-    """
+    """Compile Solidity source code."""
     try:
         # Create temporary file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.sol', delete=False) as f:
@@ -283,12 +281,7 @@ async def compile_solidity(code: str, filename: str = "Contract.sol") -> dict[st
         return {"success": False, "errors": [str(e)], "warnings": [], "contracts": None}
 
 async def security_audit(code: str, filename: str = "Contract.sol") -> dict[str, Any]:
-    """Run Slither security analysis on Solidity code.
-    
-    Args:
-        code: The Solidity source code as text
-        filename: Optional filename for the contract (default: Contract.sol)
-    """
+    """Run Slither security analysis on Solidity code."""
     try:
         # Create temporary file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.sol', delete=False) as f:
@@ -349,154 +342,8 @@ async def security_audit(code: str, filename: str = "Contract.sol") -> dict[str,
     except Exception as e:
         return {"success": False, "findings": [], "summary": {}, "errors": [str(e)]}
 
-async def compile_circom(code: str, filename: str = "circuit.circom") -> dict[str, Any]:
-    """Compile Circom source code using the circom compiler.
-
-    Args:
-        code: The Circom source code as text
-        filename: Optional filename for the circuit (default: circuit.circom)
-    """
-    try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            source_path = os.path.join(tmpdir, filename)
-            with open(source_path, "w") as f:
-                f.write(code)
-
-            result = subprocess.run([
-                "circom",
-                source_path,
-                "--r1cs",
-                "--wasm",
-                "--json",
-                "--sym",
-                "--output",
-                tmpdir,
-            ], capture_output=True, text=True, timeout=60)
-
-            success = result.returncode == 0
-            errors: list[str] = []
-            warnings: list[str] = []
-
-            # Parse stderr for errors and warnings
-            if result.stderr:
-                for line in result.stderr.strip().split("\n"):
-                    if "Error" in line:
-                        errors.append(line.strip())
-                    elif "Warning" in line:
-                        warnings.append(line.strip())
-
-            artifacts: dict[str, str] = {}
-            if success:
-                for root_dir, _, files in os.walk(tmpdir):
-                    for file in files:
-                        path = os.path.join(root_dir, file)
-                        if path == source_path:
-                            continue
-                        with open(path, "rb") as af:
-                            rel = os.path.relpath(path, tmpdir)
-                            artifacts[rel] = base64.b64encode(af.read()).decode()
-
-            return {
-                "success": success,
-                "errors": errors,
-                "warnings": warnings,
-                "artifacts": artifacts,
-                "stdout": result.stdout,
-                "filename": filename,
-            }
-
-    except subprocess.TimeoutExpired:
-        return {
-            "success": False,
-            "errors": ["Compilation timeout"],
-            "warnings": [],
-            "artifacts": {},
-            "stdout": "",
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "errors": [str(e)],
-            "warnings": [],
-            "artifacts": {},
-            "stdout": "",
-        }
-
-async def audit_circom(code: str, filename: str = "circuit.circom") -> dict[str, Any]:
-    """Run circomspect security analysis on Circom code.
-
-    Args:
-        code: The Circom source code as text
-        filename: Optional filename for the circuit (default: circuit.circom)
-    """
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".circom", delete=False) as f:
-            f.write(code)
-            temp_file = f.name
-
-        result = subprocess.run(
-            ["circomspect", temp_file, "--format", "json"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-
-        os.unlink(temp_file)
-
-        findings: list[Any] = []
-        summary: dict[str, Any] = {}
-        errors: list[str] = []
-        success = False
-
-        if result.stdout:
-            try:
-                output = json.loads(result.stdout)
-                findings = output.get("findings", output.get("issues", []))
-                severity_counts: dict[str, int] = {}
-                for item in findings:
-                    sev = item.get("severity", item.get("level", "unknown"))
-                    severity_counts[sev] = severity_counts.get(sev, 0) + 1
-                summary = {
-                    "total_findings": len(findings),
-                    "severity_breakdown": severity_counts,
-                }
-                success = True
-            except json.JSONDecodeError:
-                errors.append("Failed to parse circomspect output")
-
-        if result.stderr and not success:
-            errors.append(result.stderr.strip())
-
-        return {
-            "success": success or result.returncode == 0,
-            "findings": findings,
-            "summary": summary,
-            "errors": errors,
-            "filename": filename,
-        }
-
-    except subprocess.TimeoutExpired:
-        return {
-            "success": False,
-            "findings": [],
-            "summary": {},
-            "errors": ["Analysis timeout"],
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "findings": [],
-            "summary": {},
-            "errors": [str(e)],
-        }
-
 async def compile_and_audit(code: str, filename: str = "Contract.sol") -> dict[str, Any]:
-    """Compile Solidity code and then run security audit.
-    
-    Args:
-        code: The Solidity source code as text
-        filename: Optional filename for the contract (default: Contract.sol)
-    """
+    """Compile Solidity code and then run security audit."""
     # Step 1: Compile
     compile_result = await compile_solidity(code, filename)
     
