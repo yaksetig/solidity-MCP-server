@@ -3,7 +3,6 @@ import subprocess
 import tempfile
 import json
 from typing import Any
-import base64
 import uvicorn
 import asyncio
 from fastapi import FastAPI, Request
@@ -89,118 +88,65 @@ TOOLS_SCHEMA = [
     }
 ]
 
-# Async queue for server-sent events
-notifications_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+# Global request handler
+request_handler = None
 
-@app.get("/")
-async def root():
-    """Return server information and available endpoints."""
-    return {
-        "name": "Solidity MCP Server",
-        "version": "1.0.0",
-        "endpoints": {
-            "mcp": "/mcp",
-            "sse": "/sse",
-            "health": "/health"
-        },
-        "description": "MCP server for Solidity compilation and security auditing"
-    }
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy", "service": "solidity-mcp"}
-
-# SSE endpoint - support both GET and POST
-@app.get("/sse")
-@app.post("/sse")
-async def sse_stream():
-    """Stream asynchronous notifications via Server-Sent Events."""
+class MCPRequestHandler:
+    def __init__(self):
+        self.initialized = False
     
-    async def event_generator():
-        yield "data: {\"type\": \"connection\", \"message\": \"SSE connection established\"}\n\n"
+    async def handle_request(self, request_data: dict) -> dict:
+        method = request_data.get("method")
+        params = request_data.get("params", {})
+        request_id = request_data.get("id")
         
-        while True:
-            try:
-                message = await asyncio.wait_for(
-                    notifications_queue.get(), timeout=30
-                )
-                yield f"data: {json.dumps(message)}\n\n"
-            except asyncio.TimeoutError:
-                yield "data: {\"type\": \"keepalive\", \"timestamp\": \"" + str(asyncio.get_event_loop().time()) + "\"}\n\n"
-
-    headers = {
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "*",
-    }
-
-    return StreamingResponse(
-        event_generator(), 
-        media_type="text/plain", 
-        headers=headers
-    )
-
-@app.post("/mcp")
-async def handle_mcp_request(request: Request):
-    """Handle MCP JSON-RPC requests at /mcp endpoint"""
-    try:
-        body = await request.json()
-        method = body.get("method")
-        params = body.get("params", {})
-        request_id = body.get("id")
+        print(f"Handling MCP request: {method} (ID: {request_id})")
         
-        print(f"MCP Request - Method: {method}, ID: {request_id}")
-        print(f"MCP Params: {params}")
-
         if method == "initialize":
-            # Use the client's protocol version if provided, otherwise use our default
-            client_protocol_version = params.get("protocolVersion", "2024-11-05")
-            
-            response = {
+            return {
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "result": {
-                    "protocolVersion": client_protocol_version,
+                    "protocolVersion": "2024-11-05",
                     "capabilities": {
-                        "tools": {
-                            "listChanged": True
-                        }
+                        "tools": {}
                     },
                     "serverInfo": {
-                        "name": "solidity-mcp",
+                        "name": "solidity-mcp-server",
                         "version": "1.0.0"
-                    },
-                    "tools": TOOLS_SCHEMA
+                    }
                 }
             }
-            print(f"Sending initialize response with protocol version: {client_protocol_version} and {len(TOOLS_SCHEMA)} tools")
-            return response
+        
+        elif method == "notifications/initialized":
+            self.initialized = True
+            print("MCP client initialized")
+            return None  # Notifications don't need responses
         
         elif method == "tools/list":
-            response = {
+            return {
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "result": {
                     "tools": TOOLS_SCHEMA
                 }
             }
-            print(f"Sending tools/list response with {len(TOOLS_SCHEMA)} tools")
-            return response
-        
-        elif method == "notifications/initialized":
-            # This is a notification, no response needed for notifications
-            print("Received initialized notification")
-            return None
         
         elif method == "tools/call":
+            if not self.initialized:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {
+                        "code": -32002,
+                        "message": "Server not initialized"
+                    }
+                }
+            
             tool_name = params.get("name")
             arguments = params.get("arguments", {})
             
-            print(f"Tool call: {tool_name}")
-            print(f"Arguments: {arguments}")
+            print(f"Calling tool: {tool_name}")
             
             try:
                 if tool_name == "compile_solidity":
@@ -228,22 +174,6 @@ async def handle_mcp_request(request: Request):
                         }
                     }
 
-                # Send notification
-                notification = {
-                    "jsonrpc": "2.0",
-                    "method": "notifications/tool_result",
-                    "params": {
-                        "tool": tool_name,
-                        "success": result.get("success", False),
-                        "timestamp": asyncio.get_event_loop().time()
-                    }
-                }
-                
-                try:
-                    notifications_queue.put_nowait(notification)
-                except asyncio.QueueFull:
-                    print("Notification queue full, skipping notification")
-
                 return {
                     "jsonrpc": "2.0",
                     "id": request_id,
@@ -258,19 +188,18 @@ async def handle_mcp_request(request: Request):
                     }
                 }
                 
-            except Exception as tool_error:
-                print(f"Tool execution error: {str(tool_error)}")
+            except Exception as e:
+                print(f"Tool execution error: {str(e)}")
                 return {
                     "jsonrpc": "2.0",
                     "id": request_id,
                     "error": {
                         "code": -32603,
-                        "message": f"Tool execution failed: {str(tool_error)}"
+                        "message": f"Tool execution failed: {str(e)}"
                     }
                 }
         
         else:
-            print(f"Unknown MCP method: {method}")
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
@@ -279,49 +208,97 @@ async def handle_mcp_request(request: Request):
                     "message": f"Method not found: {method}"
                 }
             }
+
+# SSE endpoint - this is what Claude connects to
+@app.get("/sse")
+async def sse_endpoint(request: Request):
+    """SSE endpoint for MCP communication"""
+    global request_handler
+    request_handler = MCPRequestHandler()
     
-    except json.JSONDecodeError as e:
-        print(f"JSON decode error: {str(e)}")
-        return {
-            "jsonrpc": "2.0",
-            "id": None,
-            "error": {
-                "code": -32700,
-                "message": "Parse error: Invalid JSON"
-            }
+    async def event_stream():
+        # Send ready signal
+        yield f"event: message\ndata: {json.dumps({'type': 'server_ready'})}\n\n"
+        
+        while True:
+            try:
+                # In a real SSE implementation, you'd read from the request body
+                # For now, we'll just send keepalives
+                await asyncio.sleep(30)
+                yield f"event: ping\ndata: {json.dumps({'type': 'keepalive'})}\n\n"
+            except Exception as e:
+                print(f"SSE error: {e}")
+                break
+    
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
         }
+    )
+
+# POST endpoint for MCP requests over SSE
+@app.post("/sse")
+async def handle_sse_request(request: Request):
+    """Handle MCP requests sent to SSE endpoint"""
+    global request_handler
+    
+    if not request_handler:
+        request_handler = MCPRequestHandler()
+    
+    try:
+        body = await request.json()
+        print(f"SSE POST request: {body}")
+        
+        response = await request_handler.handle_request(body)
+        
+        if response is None:
+            # Notification - no response needed
+            return {"status": "ok"}
+        
+        return response
+        
     except Exception as e:
-        print(f"Unexpected error: {str(e)}")
-        request_id = body.get("id") if 'body' in locals() else None
+        print(f"SSE request handling error: {str(e)}")
         return {
             "jsonrpc": "2.0",
-            "id": request_id,
+            "id": body.get("id") if 'body' in locals() else None,
             "error": {
                 "code": -32603,
                 "message": f"Internal error: {str(e)}"
             }
         }
 
-# Legacy endpoint for backward compatibility
-@app.post("/")
-async def handle_legacy_mcp_request(request: Request):
-    """Legacy MCP endpoint - redirects to /mcp"""
-    return await handle_mcp_request(request)
+# Root endpoint
+@app.get("/")
+async def root():
+    return {
+        "name": "Solidity MCP Server",
+        "version": "1.0.0",
+        "transport": "sse",
+        "endpoint": "/sse"
+    }
+
+# Health check
+@app.get("/health")
+async def health():
+    return {"status": "healthy"}
 
 # Tool implementations
 async def compile_solidity(code: str, filename: str = "Contract.sol") -> dict[str, Any]:
     """Compile Solidity source code."""
-    print(f"Starting Solidity compilation for {filename}")
+    print(f"Compiling Solidity: {filename}")
     
     try:
-        # Create temporary file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.sol', delete=False) as f:
             f.write(code)
             temp_file = f.name
         
-        print(f"Created temp file: {temp_file}")
-        
-        # Run solc compilation
         temp_dir = os.path.dirname(temp_file)
         cmd = [
             'solc',
@@ -332,15 +309,7 @@ async def compile_solidity(code: str, filename: str = "Contract.sol") -> dict[st
             temp_file
         ]
         
-        print(f"Running command: {' '.join(cmd)}")
-        
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        
-        print(f"Compilation result - Return code: {result.returncode}")
-        print(f"Stdout: {result.stdout[:500]}...")
-        print(f"Stderr: {result.stderr[:500]}...")
-        
-        # Clean up temp file
         os.unlink(temp_file)
         
         success = result.returncode == 0
@@ -352,13 +321,10 @@ async def compile_solidity(code: str, filename: str = "Contract.sol") -> dict[st
             try:
                 output = json.loads(result.stdout)
                 contracts = output.get('contracts', {})
-                print(f"Found {len(contracts)} contracts")
             except json.JSONDecodeError as e:
-                print(f"JSON decode error: {e}")
-                errors.append(f"Failed to parse compilation output: {str(e)}")
+                errors.append(f"Failed to parse compiler output: {str(e)}")
                 success = False
         
-        # Parse stderr for errors and warnings
         if result.stderr:
             lines = result.stderr.strip().split('\n')
             for line in lines:
@@ -368,34 +334,24 @@ async def compile_solidity(code: str, filename: str = "Contract.sol") -> dict[st
                         errors.append(line)
                     elif 'Warning:' in line or 'warning:' in line.lower():
                         warnings.append(line)
-                    elif line and not any(skip in line.lower() for skip in ['compiling', 'compiler version']):
-                        # Treat other non-empty lines as potential errors
-                        if not success:
-                            errors.append(line)
         
-        result_data = {
+        return {
             "success": success,
             "errors": errors,
             "warnings": warnings,
             "contracts": contracts,
-            "filename": filename,
-            "solc_version": "detected" if success else "unknown"
+            "filename": filename
         }
-        
-        print(f"Compilation completed - Success: {success}, Errors: {len(errors)}, Warnings: {len(warnings)}")
-        return result_data
     
     except subprocess.TimeoutExpired:
-        print("Compilation timeout")
         return {
             "success": False, 
-            "errors": ["Compilation timeout (30s limit exceeded)"], 
+            "errors": ["Compilation timeout"], 
             "warnings": [], 
             "contracts": None,
             "filename": filename
         }
     except Exception as e:
-        print(f"Compilation exception: {str(e)}")
         return {
             "success": False, 
             "errors": [f"Compilation error: {str(e)}"], 
@@ -405,35 +361,20 @@ async def compile_solidity(code: str, filename: str = "Contract.sol") -> dict[st
         }
 
 async def security_audit(code: str, filename: str = "Contract.sol") -> dict[str, Any]:
-    """Run Slither security analysis on Solidity code."""
-    print(f"Starting security audit for {filename}")
+    """Run Slither security analysis."""
+    print(f"Running security audit: {filename}")
     
     try:
-        # Create temporary file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.sol', delete=False) as f:
             f.write(code)
             temp_file = f.name
         
-        print(f"Created temp file for audit: {temp_file}")
-        
-        # Run Slither analysis
         temp_dir = os.path.dirname(temp_file)
-        solc_args = (
-            f"--allow-paths {temp_dir},{NODE_MODULES_PATH} "
-            f"--base-path {temp_dir} "
-            f"--include-path {NODE_MODULES_PATH}"
-        )
+        solc_args = f"--allow-paths {temp_dir},{NODE_MODULES_PATH} --base-path {temp_dir} --include-path {NODE_MODULES_PATH}"
         
         cmd = ['slither', '--json', '-', '--solc-args', solc_args, temp_file]
-        print(f"Running Slither: {' '.join(cmd)}")
-        
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         
-        print(f"Slither result - Return code: {result.returncode}")
-        print(f"Stdout length: {len(result.stdout) if result.stdout else 0}")
-        print(f"Stderr: {result.stderr[:500] if result.stderr else 'None'}...")
-        
-        # Clean up temp file
         os.unlink(temp_file)
         
         findings = []
@@ -447,9 +388,6 @@ async def security_audit(code: str, filename: str = "Contract.sol") -> dict[str,
                 findings = output.get('results', {}).get('detectors', [])
                 success = True
                 
-                print(f"Found {len(findings)} security findings")
-                
-                # Generate summary
                 severity_counts = {}
                 for finding in findings:
                     impact = finding.get('impact', 'unknown')
@@ -457,55 +395,36 @@ async def security_audit(code: str, filename: str = "Contract.sol") -> dict[str,
                 
                 summary = {
                     "total_findings": len(findings),
-                    "severity_breakdown": severity_counts,
-                    "analysis_completed": True
+                    "severity_breakdown": severity_counts
                 }
                 
             except json.JSONDecodeError as e:
-                print(f"Failed to parse Slither JSON output: {e}")
                 errors.append(f"Failed to parse Slither output: {str(e)}")
         
-        # Handle stderr
-        if result.stderr:
-            stderr_lines = [line.strip() for line in result.stderr.strip().split('\n') if line.strip()]
-            # Only treat as errors if analysis wasn't successful
-            if not success:
-                errors.extend(stderr_lines)
-            else:
-                # Log but don't treat as errors if we got successful JSON output
-                print(f"Slither stderr (non-fatal): {result.stderr}")
+        if result.stderr and not success:
+            errors.append(result.stderr.strip())
         
-        # If we got a 0 return code but no JSON, that might still be success with no findings
         if result.returncode == 0 and not success and not errors:
             success = True
-            summary = {
-                "total_findings": 0,
-                "severity_breakdown": {},
-                "analysis_completed": True
-            }
+            summary = {"total_findings": 0, "severity_breakdown": {}}
         
-        result_data = {
+        return {
             "success": success,
             "findings": findings,
             "summary": summary,
             "errors": errors,
             "filename": filename
         }
-        
-        print(f"Security audit completed - Success: {success}, Findings: {len(findings)}, Errors: {len(errors)}")
-        return result_data
     
     except subprocess.TimeoutExpired:
-        print("Security audit timeout")
         return {
             "success": False, 
             "findings": [], 
             "summary": {}, 
-            "errors": ["Security analysis timeout (60s limit exceeded)"],
+            "errors": ["Analysis timeout"],
             "filename": filename
         }
     except Exception as e:
-        print(f"Security audit exception: {str(e)}")
         return {
             "success": False, 
             "findings": [], 
@@ -515,55 +434,33 @@ async def security_audit(code: str, filename: str = "Contract.sol") -> dict[str,
         }
 
 async def compile_and_audit(code: str, filename: str = "Contract.sol") -> dict[str, Any]:
-    """Compile Solidity code and then run security audit."""
-    print(f"Starting complete workflow (compile + audit) for {filename}")
+    """Compile and then audit Solidity code."""
+    print(f"Running compile and audit workflow: {filename}")
     
     # Step 1: Compile
-    print("Step 1: Compilation")
     compile_result = await compile_solidity(code, filename)
     
     if not compile_result["success"]:
-        print("Compilation failed, skipping audit")
         return {
             "workflow": "compile_and_audit",
             "compile_step": compile_result,
-            "audit_step": {
-                "skipped": True,
-                "reason": "Compilation failed",
-                "success": False
-            },
+            "audit_step": {"skipped": True, "reason": "Compilation failed"},
             "overall_success": False,
             "filename": filename
         }
     
     # Step 2: Audit
-    print("Step 2: Security Audit")
     audit_result = await security_audit(code, filename)
     
-    overall_success = compile_result["success"] and audit_result["success"]
-    
-    result = {
+    return {
         "workflow": "compile_and_audit", 
         "compile_step": compile_result,
         "audit_step": audit_result,
-        "overall_success": overall_success,
-        "filename": filename,
-        "summary": {
-            "compilation": "passed" if compile_result["success"] else "failed",
-            "security_audit": "completed" if audit_result["success"] else "failed",
-            "total_warnings": len(compile_result.get("warnings", [])),
-            "total_security_findings": len(audit_result.get("findings", []))
-        }
+        "overall_success": compile_result["success"] and audit_result["success"],
+        "filename": filename
     }
-    
-    print(f"Complete workflow finished - Overall success: {overall_success}")
-    return result
 
 if __name__ == "__main__":
-    print(f"Starting Solidity MCP server on port {port}")
-    print("Available endpoints:")
-    print(f"  - Health check: http://0.0.0.0:{port}/health")
-    print(f"  - MCP endpoint: http://0.0.0.0:{port}/mcp")
-    print(f"  - SSE stream: http://0.0.0.0:{port}/sse")
-    print(f"  - Legacy MCP: http://0.0.0.0:{port}/")
+    print(f"Starting Solidity MCP Server on port {port}")
+    print(f"SSE endpoint: http://0.0.0.0:{port}/sse")
     uvicorn.run(app, host="0.0.0.0", port=port)
