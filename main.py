@@ -125,18 +125,15 @@ async def handle_mcp_request(request: Request):
                     "capabilities": {
                         "tools": {
                             "listChanged": True
-                        },
-                        "resources": {},
-                        "prompts": {}
+                        }
                     },
                     "serverInfo": {
                         "name": "solidity-mcp",
                         "version": "1.0.0"
-                    },
-                    "tools": TOOLS_SCHEMA
+                    }
                 }
             }
-            print(f"Sending initialize response with {len(TOOLS_SCHEMA)} tools")
+            print("Sending initialize response")
             return response
         
         elif method == "tools/list":

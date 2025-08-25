@@ -1,2 +1,4 @@
 fastmcp
 slither-analyzer
+fastapi
+uvicorn
