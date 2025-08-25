@@ -116,6 +116,7 @@ async def sse_stream():
     """Stream asynchronous notifications via Server-Sent Events."""
 
     async def event_generator():
+        yield ": ready\n\n"
         while True:
             try:
                 message = await asyncio.wait_for(
@@ -125,7 +126,14 @@ async def sse_stream():
             except asyncio.TimeoutError:
                 yield ": keep-alive\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+    }
+
+    return StreamingResponse(
+        event_generator(), media_type="text/event-stream", headers=headers
+    )
 
 @app.post("/")
 async def handle_mcp_request(request: Request):
@@ -152,7 +160,8 @@ async def handle_mcp_request(request: Request):
                     "serverInfo": {
                         "name": "solidity-mcp",
                         "version": "1.0.0"
-                    }
+                    },
+                    "tools": TOOLS_SCHEMA,
                 }
             }
             print("Sending initialize response")
