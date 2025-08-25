@@ -90,21 +90,19 @@ TOOLS_SCHEMA = [
 # MCP Protocol endpoints
 @app.get("/")
 async def root():
+    """Return server information and tool definitions."""
     return {
-        "jsonrpc": "2.0",
-        "result": {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {
-                "tools": {
-                    "listChanged": True
-                }
-            },
-            "serverInfo": {
-                "name": "solidity-mcp",
-                "version": "1.0.0"
-            },
-            "tools": TOOLS_SCHEMA
-        }
+        "protocolVersion": "2024-11-05",
+        "capabilities": {
+            "tools": {
+                "listChanged": True
+            }
+        },
+        "serverInfo": {
+            "name": "solidity-mcp",
+            "version": "1.0.0"
+        },
+        "tools": TOOLS_SCHEMA,
     }
 
 @app.post("/")
