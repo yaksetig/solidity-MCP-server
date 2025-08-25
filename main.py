@@ -5,8 +5,10 @@ import json
 from typing import Any
 import base64
 import uvicorn
+import asyncio
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 # Get port from Railway's environment variable
 port = int(os.environ.get("PORT", 8080))
@@ -87,6 +89,9 @@ TOOLS_SCHEMA = [
     }
 ]
 
+# Async queue for server-sent events
+notifications_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
 # MCP Protocol endpoints
 @app.get("/")
 async def root():
@@ -104,6 +109,23 @@ async def root():
         },
         "tools": TOOLS_SCHEMA,
     }
+
+
+@app.get("/sse")
+async def sse_stream():
+    """Stream asynchronous notifications via Server-Sent Events."""
+
+    async def event_generator():
+        while True:
+            try:
+                message = await asyncio.wait_for(
+                    notifications_queue.get(), timeout=15
+                )
+                yield f"data: {json.dumps(message)}\n\n"
+            except asyncio.TimeoutError:
+                yield ": keep-alive\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.post("/")
 async def handle_mcp_request(request: Request):
@@ -182,7 +204,19 @@ async def handle_mcp_request(request: Request):
                         "message": f"Method not found: {tool_name}"
                     }
                 }
-            
+
+            await notifications_queue.put(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "tools/call/result",
+                    "params": {
+                        "name": tool_name,
+                        "id": request_id,
+                        "success": result.get("success"),
+                    },
+                }
+            )
+
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
