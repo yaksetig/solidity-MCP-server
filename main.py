@@ -103,18 +103,21 @@ class MCPRequestHandler:
         print(f"Handling MCP request: {method} (ID: {request_id})")
         
         if method == "initialize":
+            # Use client's protocol version and include tools directly
+            client_version = params.get("protocolVersion", "2024-11-05")
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "result": {
-                    "protocolVersion": "2024-11-05",
+                    "protocolVersion": client_version,
                     "capabilities": {
                         "tools": {}
                     },
                     "serverInfo": {
-                        "name": "solidity-mcp-server",
+                        "name": "solidity-mcp-server", 
                         "version": "1.0.0"
-                    }
+                    },
+                    "tools": TOOLS_SCHEMA
                 }
             }
         
