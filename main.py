@@ -172,10 +172,11 @@ async def handle_mcp_request(request: Request):
                     "serverInfo": {
                         "name": "solidity-mcp",
                         "version": "1.0.0"
-                    }
+                    },
+                    "tools": TOOLS_SCHEMA
                 }
             }
-            print(f"Sending initialize response with protocol version: {client_protocol_version}")
+            print(f"Sending initialize response with protocol version: {client_protocol_version} and {len(TOOLS_SCHEMA)} tools")
             return response
         
         elif method == "tools/list":
