@@ -61,7 +61,9 @@ async def handle_mcp_request(request: Request):
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {
-                        "tools": {}
+                        "tools": {
+                            "listChanged": True
+                        }
                     },
                     "serverInfo": {
                         "name": "solidity-mcp",
@@ -140,6 +142,11 @@ async def handle_mcp_request(request: Request):
             }
             print(f"Sending tools/list response with {len(response['result']['tools'])} tools")
             return response
+        
+        elif method == "notifications/initialized":
+            # This is a notification, no response needed
+            print("Received initialized notification")
+            return {"jsonrpc": "2.0"}
         
         elif method == "tools/call":
             tool_name = params.get("name")
