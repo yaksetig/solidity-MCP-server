@@ -156,13 +156,18 @@ async def handle_mcp_request(request: Request):
         print(f"MCP Params: {params}")
 
         if method == "initialize":
+            # Use the client's protocol version if provided, otherwise use our default
+            client_protocol_version = params.get("protocolVersion", "2024-11-05")
+            
             response = {
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "result": {
-                    "protocolVersion": "2024-11-05",
+                    "protocolVersion": client_protocol_version,
                     "capabilities": {
-                        "tools": {}
+                        "tools": {
+                            "listChanged": True
+                        }
                     },
                     "serverInfo": {
                         "name": "solidity-mcp",
@@ -170,7 +175,7 @@ async def handle_mcp_request(request: Request):
                     }
                 }
             }
-            print("Sending initialize response")
+            print(f"Sending initialize response with protocol version: {client_protocol_version}")
             return response
         
         elif method == "tools/list":
